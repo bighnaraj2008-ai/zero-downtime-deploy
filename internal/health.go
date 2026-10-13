@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -35,7 +36,31 @@ func NewHTTPHealthChecker(logFn func(format string, args ...any)) *HTTPHealthChe
 		}
 	}
 	return &HTTPHealthChecker{
-		client: &http.Client{},
-		logFn:  logFn,
+		client: &http.Client{
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		logFn: logFn,
 	}
+}
+
+// ProbeOnce executes a single HTTP GET request to test container response.
+func (h *HTTPHealthChecker) ProbeOnce(ctx context.Context, targetURL string, timeout time.Duration) (int, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", "zero-downtime-deploy-health-probe/1.0")
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
 }
