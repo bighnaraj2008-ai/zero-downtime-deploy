@@ -122,5 +122,15 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 		shortID = shortID[:12]
 	}
 	o.logFn("  ✓ Candidate container running (ID: %s)", shortID)
+
+	// Phase 4: Automated Health Verification
+	o.logFn("\n[Phase 4/5] Executing Automated Health Validation")
+	healthResult, err := o.healthChecker.Check(ctx, "127.0.0.1", candidatePort, cfg.HealthCheck)
+	if err != nil || !healthResult.Success {
+		return fmt.Errorf("candidate container on port %d failed health check: %w", candidatePort, err)
+	}
+	o.logFn("  ✓ Candidate container verified healthy in %v (Passed on attempt %d)",
+		healthResult.TotalDuration.Round(time.Millisecond), healthResult.Attempts)
+
 	return nil
 }
