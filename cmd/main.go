@@ -25,6 +25,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:          "zero-downtime-deploy",
 		Short:        "Robust Blue/Green zero-downtime container deployment CLI tool",
+		SilenceUsage: true,
 		Long: `A release engineering orchestration CLI in Go that manages zero-downtime 
 Blue/Green deployments for Docker containers with automated health checks, 
 traffic switching, and instant automated rollbacks on failure.`,
