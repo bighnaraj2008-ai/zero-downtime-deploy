@@ -5,6 +5,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.21%2B-blue.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Zero Downtime](https://img.shields.io/badge/Deployment-Blue%2FGreen-blueviolet.svg)](#architecture)
+[![GitHub Repository](https://img.shields.io/badge/GitHub-bighnaraj2008--ai%2Fzero--downtime--deploy-181717.svg?logo=github)](https://github.com/bighnaraj2008-ai/zero-downtime-deploy)
 
 ---
 
