@@ -3,8 +3,10 @@ package internal
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 )
 
@@ -69,4 +71,17 @@ func (d *RealDockerManager) Ping(ctx context.Context) error {
 // Close releases Docker client resources.
 func (d *RealDockerManager) Close() error {
 	return d.cli.Close()
+}
+
+// PullImage pulls the specified Docker image from a registry.
+func (d *RealDockerManager) PullImage(ctx context.Context, imageRef string) error {
+	reader, err := d.cli.ImagePull(ctx, imageRef, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to pull image '%s': %w", imageRef, err)
+	}
+	defer reader.Close()
+
+	// Consume the output stream to ensure pull completes
+	_, _ = io.Copy(io.Discard, reader)
+	return nil
 }
