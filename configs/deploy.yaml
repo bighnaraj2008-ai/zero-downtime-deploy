@@ -1,0 +1,31 @@
+# Zero-Downtime Blue/Green Deployment Configuration
+app_name: "demo-web"
+image: "nginx"
+tag: "alpine"
+container_port: 80
+
+# Port allocation for Blue/Green environments
+blue_port: 8081
+green_port: 8082
+live_port: 8080
+
+# Health check configuration for candidate container
+health_check:
+  path: "/"
+  initial_delay_seconds: 2
+  interval_seconds: 2
+  timeout_seconds: 5
+  max_retries: 10
+  expected_status: 200
+
+# Connection draining and safety thresholds
+drain_timeout_seconds: 10
+rollback_on_failure: true
+
+# Environment variables injected into containers
+env:
+  ENV: "production"
+  RELEASE_STAGE: "stable"
+
+# State persistence file
+state_file: ".deploy-state.json"
