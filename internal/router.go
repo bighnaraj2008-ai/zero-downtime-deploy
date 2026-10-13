@@ -13,15 +13,15 @@ import (
 // TrafficRouter provides a dynamic reverse proxy listening on the public live port
 // that atomically routes traffic to either Blue or Green upstreams.
 type TrafficRouter struct {
-	mu           sync.RWMutex
-	livePort     int
-	activeSlot   string
-	activePort   int
-	proxy        *httputil.ReverseProxy
-	server       *http.Server
-	stateFile    string
-	targetURL    *url.URL
-	logFn        func(format string, args ...any)
+	mu         sync.RWMutex
+	livePort   int
+	activeSlot string
+	activePort int
+	proxy      *httputil.ReverseProxy
+	server     *http.Server
+	stateFile  string
+	targetURL  *url.URL
+	logFn      func(format string, args ...any)
 }
 
 // NewTrafficRouter creates a TrafficRouter instance.
@@ -74,7 +74,7 @@ func (r *TrafficRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if proxy == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = fmt.Fprintf(w, `{"status": 503, "message": "No active upstream configured in Blue/Green router"}` + "\n")
+		_, _ = fmt.Fprintf(w, `{"status": 503, "message": "No active upstream configured in Blue/Green router"}`+"\n")
 		return
 	}
 

@@ -17,17 +17,17 @@ type Orchestrator struct {
 
 // StatusReport details current active/standby environments.
 type StatusReport struct {
-	AppName            string         `json:"app_name"`
-	ActiveSlot         string         `json:"active_slot"`
-	ActivePort         int            `json:"active_port"`
-	ActiveImage        string         `json:"active_image"`
-	ActiveContainer    *ContainerInfo `json:"active_container,omitempty"`
-	StandbySlot        string         `json:"standby_slot"`
-	StandbyPort        int            `json:"standby_port"`
-	StandbyImage       string         `json:"standby_image"`
-	StandbyContainer   *ContainerInfo `json:"standby_container,omitempty"`
-	LastDeployTime     time.Time      `json:"last_deploy_time"`
-	HistorySummaryCount int           `json:"history_count"`
+	AppName             string         `json:"app_name"`
+	ActiveSlot          string         `json:"active_slot"`
+	ActivePort          int            `json:"active_port"`
+	ActiveImage         string         `json:"active_image"`
+	ActiveContainer     *ContainerInfo `json:"active_container,omitempty"`
+	StandbySlot         string         `json:"standby_slot"`
+	StandbyPort         int            `json:"standby_port"`
+	StandbyImage        string         `json:"standby_image"`
+	StandbyContainer    *ContainerInfo `json:"standby_container,omitempty"`
+	LastDeployTime      time.Time      `json:"last_deploy_time"`
+	HistorySummaryCount int            `json:"history_count"`
 }
 
 // NewOrchestrator creates an Orchestrator instance.
