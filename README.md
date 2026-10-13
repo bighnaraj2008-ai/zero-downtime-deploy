@@ -26,3 +26,30 @@ Traditional in-place container redeployments (e.g. `docker stop && docker rm && 
 3. **Atomic Traffic Switching**: Live ingress traffic is instantly cut over to the healthy candidate.
 4. **Connection Draining (Grace Period)**: The older container remains active for a configurable drain window to fulfill in-flight client connections before graceful termination.
 5. **Instant Automated Rollback**: If the candidate fails health checks or crashes on startup, the tool immediately aborts, stops the failed container, preserves the current active release untouched, and logs the incident.
+
+---
+
+## Installation & Build
+
+### Prerequisites
+- [Go 1.21+](https://golang.org/dl/)
+- [Docker Engine](https://docs.docker.com/engine/) or [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+
+### Compiling Locally
+
+```powershell
+# Inside the zero-downtime-deploy folder:
+go build -o zero-downtime-deploy.exe ./cmd/main.go
+```
+
+On Linux or macOS:
+```bash
+go build -o zero-downtime-deploy ./cmd/main.go
+chmod +x zero-downtime-deploy
+```
+
+Verify installation:
+```bash
+./zero-downtime-deploy version
+# Output: zero-downtime-deploy v1.0.0 (Go Release Engineering CLI)
+```
