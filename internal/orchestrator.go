@@ -127,7 +127,29 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 	o.logFn("\n[Phase 4/5] Executing Automated Health Validation")
 	healthResult, err := o.healthChecker.Check(ctx, "127.0.0.1", candidatePort, cfg.HealthCheck)
 	if err != nil || !healthResult.Success {
-		return fmt.Errorf("candidate container on port %d failed health check: %w", candidatePort, err)
+		o.logFn("\n❌ [HEALTH CHECK FAILED] Candidate container failed validation!")
+		if err != nil {
+			o.logFn("  Error: %v", err)
+		}
+
+		if cfg.RollbackOnFailure {
+			o.logFn("\n🚨 [AUTOMATED ROLLBACK TRIGGERED]")
+			o.logFn("  • Cleaning up unhealthy candidate container (%s-%s)...", cfg.AppName, candidateSlot)
+			_ = o.docker.StopContainer(ctx, candidateID, 2)
+			_ = o.docker.RemoveContainer(ctx, candidateID)
+			o.logFn("  ✓ Candidate container stopped and removed")
+
+			if activeSlot != "" {
+				o.logFn("  ✓ Previous active environment '%s' remains UNTOUCHED and LIVE on port %d", activeSlot, oldPort)
+				o.state.AddHistory(candidateSlot, targetImage, "rolled_back", fmt.Sprintf("Health check failed on port %d", candidatePort))
+			} else {
+				o.logFn("  • No previous active container to preserve")
+				o.state.AddHistory(candidateSlot, targetImage, "failed", fmt.Sprintf("Health check failed on initial deploy port %d", candidatePort))
+			}
+			_ = o.state.Save(cfg.StateFile)
+		}
+
+		return fmt.Errorf("deployment aborted due to health check failure; automated rollback preserved stable state: %w", err)
 	}
 	o.logFn("  ✓ Candidate container verified healthy in %v (Passed on attempt %d)",
 		healthResult.TotalDuration.Round(time.Millisecond), healthResult.Attempts)
