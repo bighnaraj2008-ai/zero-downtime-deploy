@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
@@ -84,7 +86,6 @@ func (d *RealDockerManager) PullImage(ctx context.Context, imageRef string) erro
 	}
 	defer reader.Close()
 
-	// Consume the output stream to ensure pull completes
 	_, _ = io.Copy(io.Discard, reader)
 	return nil
 }
@@ -147,4 +148,59 @@ func (d *RealDockerManager) CreateAndStartContainer(ctx context.Context, opts Cr
 	}
 
 	return resp.ID, nil
+}
+
+// InspectContainer inspects a container and returns detailed runtime metadata.
+func (d *RealDockerManager) InspectContainer(ctx context.Context, containerID string) (*ContainerInfo, error) {
+	inspect, err := d.cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect container '%s': %w", containerID, err)
+	}
+
+	createdAt, _ := time.Parse(time.RFC3339Nano, inspect.Created)
+	name := strings.TrimPrefix(inspect.Name, "/")
+	slot := inspect.Config.Labels["slot"]
+
+	var hostPort int
+	for _, bindings := range inspect.NetworkSettings.Ports {
+		if len(bindings) > 0 {
+			if p, err := strconv.Atoi(bindings[0].HostPort); err == nil {
+				hostPort = p
+				break
+			}
+		}
+	}
+
+	return &ContainerInfo{
+		ID:        inspect.ID,
+		Name:      name,
+		Image:     inspect.Config.Image,
+		Slot:      slot,
+		HostPort:  hostPort,
+		IsRunning: inspect.State != nil && inspect.State.Running,
+		Status:    inspect.State.Status,
+		CreatedAt: createdAt,
+		Labels:    inspect.Config.Labels,
+	}, nil
+}
+
+// FindContainerBySlot looks up a running container matching the app name and slot labels.
+func (d *RealDockerManager) FindContainerBySlot(ctx context.Context, appName, slot string) (*ContainerInfo, error) {
+	filterArgs := filters.NewArgs()
+	filterArgs.Add("label", fmt.Sprintf("app=%s", appName))
+	filterArgs.Add("label", fmt.Sprintf("slot=%s", slot))
+
+	containers, err := d.cli.ContainerList(ctx, container.ListOptions{
+		Filters: filterArgs,
+		All:     true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	if len(containers) == 0 {
+		return nil, nil
+	}
+
+	return d.InspectContainer(ctx, containers[0].ID)
 }
