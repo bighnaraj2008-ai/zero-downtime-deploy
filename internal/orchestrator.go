@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -47,4 +48,51 @@ func NewOrchestrator(cfg *Config, docker DockerManager, health HealthChecker, lo
 		state:         state,
 		logFn:         logFn,
 	}, nil
+}
+
+// Deploy executes the zero-downtime deployment workflow.
+func (o *Orchestrator) Deploy(ctx context.Context) error {
+	cfg := o.config
+	targetImage := cfg.FullImageName()
+
+	o.logFn("=================================================================")
+	o.logFn("🚀 STARTING ZERO-DOWNTIME BLUE/GREEN DEPLOYMENT")
+	o.logFn("   Application:  %s", cfg.AppName)
+	o.logFn("   Target Image: %s", targetImage)
+	o.logFn("   Live Port:    %d", cfg.LivePort)
+	o.logFn("=================================================================")
+
+	// Determine active and candidate target slots
+	activeSlot := o.state.ActiveSlot
+	var candidateSlot string
+	var candidatePort int
+	var oldPort int
+
+	if activeSlot == "blue" {
+		candidateSlot = "green"
+		candidatePort = cfg.GreenPort
+		oldPort = cfg.BluePort
+	} else if activeSlot == "green" {
+		candidateSlot = "blue"
+		candidatePort = cfg.BluePort
+		oldPort = cfg.GreenPort
+	} else {
+		candidateSlot = "blue"
+		candidatePort = cfg.BluePort
+		oldPort = 0
+	}
+
+	o.logFn("\n[Phase 1/5] Slot & Environment Detection")
+	if activeSlot == "" {
+		o.logFn("  • Initial deployment detected: Target slot -> %s (Port: %d)", candidateSlot, candidatePort)
+	} else {
+		o.logFn("  • Currently Active Slot: %s (Port: %d, Image: %s)", activeSlot, oldPort, o.state.ActiveImage)
+		o.logFn("  • Target Candidate Slot: %s (Port: %d, Image: %s)", candidateSlot, candidatePort, targetImage)
+	}
+
+	if cfg.DryRun {
+		o.logFn("\n🔍 [DRY-RUN] Simulating deployment steps without modifying Docker containers...")
+		return nil
+	}
+	return nil
 }
