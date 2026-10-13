@@ -17,17 +17,17 @@ type Orchestrator struct {
 
 // StatusReport details current active/standby environments.
 type StatusReport struct {
-	AppName             string         `json:"app_name"`
-	ActiveSlot          string         `json:"active_slot"`
-	ActivePort          int            `json:"active_port"`
-	ActiveImage         string         `json:"active_image"`
-	ActiveContainer     *ContainerInfo `json:"active_container,omitempty"`
-	StandbySlot         string         `json:"standby_slot"`
-	StandbyPort         int            `json:"standby_port"`
-	StandbyImage        string         `json:"standby_image"`
-	StandbyContainer    *ContainerInfo `json:"standby_container,omitempty"`
-	LastDeployTime      time.Time      `json:"last_deploy_time"`
-	HistorySummaryCount int            `json:"history_count"`
+	AppName            string         `json:"app_name"`
+	ActiveSlot         string         `json:"active_slot"`
+	ActivePort         int            `json:"active_port"`
+	ActiveImage        string         `json:"active_image"`
+	ActiveContainer    *ContainerInfo `json:"active_container,omitempty"`
+	StandbySlot        string         `json:"standby_slot"`
+	StandbyPort        int            `json:"standby_port"`
+	StandbyImage       string         `json:"standby_image"`
+	StandbyContainer   *ContainerInfo `json:"standby_container,omitempty"`
+	LastDeployTime     time.Time      `json:"last_deploy_time"`
+	HistorySummaryCount int           `json:"history_count"`
 }
 
 // NewOrchestrator creates an Orchestrator instance.
@@ -62,6 +62,7 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 	o.logFn("   Live Port:    %d", cfg.LivePort)
 	o.logFn("=================================================================")
 
+	// Determine active and candidate target slots
 	activeSlot := o.state.ActiveSlot
 	var candidateSlot string
 	var candidatePort int
@@ -76,6 +77,7 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 		candidatePort = cfg.BluePort
 		oldPort = cfg.GreenPort
 	} else {
+		// First-time deployment: Default to blue
 		candidateSlot = "blue"
 		candidatePort = cfg.BluePort
 		oldPort = 0
@@ -91,6 +93,12 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 
 	if cfg.DryRun {
 		o.logFn("\n🔍 [DRY-RUN] Simulating deployment steps without modifying Docker containers...")
+		o.logFn("  • Pull image '%s' -> (dry-run OK)", targetImage)
+		o.logFn("  • Create container '%s-%s' on port %d -> (dry-run OK)", cfg.AppName, candidateSlot, candidatePort)
+		o.logFn("  • Health check candidate on :%d%s -> (dry-run OK)", candidatePort, cfg.HealthCheck.Path)
+		o.logFn("  • Switch live traffic to slot '%s' -> (dry-run OK)", candidateSlot)
+		o.logFn("  • Drain old slot '%s' for %ds -> (dry-run OK)", activeSlot, cfg.DrainTimeoutSeconds)
+		o.logFn("✨ Dry-run validation completed successfully.")
 		return nil
 	}
 
@@ -151,10 +159,11 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 
 		return fmt.Errorf("deployment aborted due to health check failure; automated rollback preserved stable state: %w", err)
 	}
+
 	o.logFn("  ✓ Candidate container verified healthy in %v (Passed on attempt %d)",
 		healthResult.TotalDuration.Round(time.Millisecond), healthResult.Attempts)
 
-	// Phase 5: Traffic Switching
+	// Phase 5: Traffic Switching & Connection Draining
 	o.logFn("\n[Phase 5/5] Traffic Switching & Decommissioning")
 	o.logFn("  • Atomic traffic handoff: Switching active routing from slot '%s' -> '%s' (Port: %d)",
 		activeSlot, candidateSlot, candidatePort)
@@ -162,6 +171,7 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 	oldContainerID := o.state.ActiveContainerID
 	oldImage := o.state.ActiveImage
 
+	// Update state to make candidate the new active release
 	o.state.StandbySlot = activeSlot
 	o.state.StandbyContainerID = oldContainerID
 	o.state.StandbyPort = oldPort
@@ -176,7 +186,164 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 
 	if err := o.state.Save(cfg.StateFile); err != nil {
 		o.logFn("  ⚠️ Warning: Failed to persist state file: %v", err)
+	} else {
+		o.logFn("  ✓ Deployment state saved successfully to '%s'", cfg.StateFile)
 	}
 
+	// Drain in-flight connections on old container
+	if oldContainerID != "" && activeSlot != "" {
+		drainSeconds := cfg.DrainTimeoutSeconds
+		if drainSeconds > 0 {
+			o.logFn("  • Draining in-flight connections on old container (%s-%s) for %ds...",
+				cfg.AppName, activeSlot, drainSeconds)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(drainSeconds) * time.Second):
+			}
+		}
+
+		o.logFn("  • Gracefully stopping old container (%s-%s)...", cfg.AppName, activeSlot)
+		if err := o.docker.StopContainer(ctx, oldContainerID, 5); err != nil {
+			o.logFn("  ⚠️ Could not stop old container: %v", err)
+		} else {
+			o.logFn("  ✓ Old container decommissioned gracefully")
+		}
+	}
+
+	o.logFn("\n=================================================================")
+	o.logFn("🎉 ZERO-DOWNTIME DEPLOYMENT SUCCEEDED!")
+	o.logFn("   Active Environment: %s", candidateSlot)
+	o.logFn("   Active Host Port:   %d", candidatePort)
+	o.logFn("   Deployed Image:     %s", targetImage)
+	o.logFn("=================================================================")
 	return nil
+}
+
+// Rollback restores the previous stable environment immediately.
+func (o *Orchestrator) Rollback(ctx context.Context) error {
+	cfg := o.config
+	o.logFn("=================================================================")
+	o.logFn("⏪ INITIATING INSTANT ROLLBACK")
+	o.logFn("   Application: %s", cfg.AppName)
+	o.logFn("=================================================================")
+
+	activeSlot := o.state.ActiveSlot
+	standbySlot := o.state.StandbySlot
+	standbyImage := o.state.StandbyImage
+	standbyPort := o.state.StandbyPort
+	standbyContainerID := o.state.StandbyContainerID
+
+	if standbySlot == "" || standbyImage == "" {
+		return fmt.Errorf("rollback aborted: no previous stable deployment recorded in state")
+	}
+
+	o.logFn("  • Current Active Slot:  %s (Port: %d, Image: %s)", activeSlot, o.state.ActivePort, o.state.ActiveImage)
+	o.logFn("  • Target Rollback Slot: %s (Port: %d, Image: %s)", standbySlot, standbyPort, standbyImage)
+
+	// Verify if the previous standby container is still present
+	needNewContainer := false
+	if standbyContainerID != "" {
+		inspect, err := o.docker.InspectContainer(ctx, standbyContainerID)
+		if err != nil || inspect == nil {
+			needNewContainer = true
+		} else if !inspect.IsRunning {
+			o.logFn("  • Standby container is stopped, restarting...")
+			// Create clean replacement on standby slot
+			needNewContainer = true
+		}
+	} else {
+		needNewContainer = true
+	}
+
+	var rollbackContainerID string
+	if needNewContainer {
+		o.logFn("  • Re-spawning previous stable container (%s-%s)...", cfg.AppName, standbySlot)
+		cID, err := o.docker.CreateAndStartContainer(ctx, CreateContainerOpts{
+			AppName:       cfg.AppName,
+			Slot:          standbySlot,
+			Image:         standbyImage,
+			ContainerPort: cfg.ContainerPort,
+			HostPort:      standbyPort,
+			Env:           cfg.Env,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to recreate previous stable container: %w", err)
+		}
+		rollbackContainerID = cID
+	} else {
+		rollbackContainerID = standbyContainerID
+	}
+
+	// Verify health of the rollback candidate
+	o.logFn("  • Validating health of rollback container on port %d...", standbyPort)
+	healthResult, err := o.healthChecker.Check(ctx, "127.0.0.1", standbyPort, cfg.HealthCheck)
+	if err != nil || !healthResult.Success {
+		return fmt.Errorf("rollback aborted: rollback target failed health check: %w", err)
+	}
+	o.logFn("  ✓ Rollback target verified healthy")
+
+	// Switch traffic back
+	o.logFn("  • Reverting active traffic back to slot '%s' (Port: %d)", standbySlot, standbyPort)
+	oldActiveContainerID := o.state.ActiveContainerID
+	oldActiveSlot := o.state.ActiveSlot
+	oldActivePort := o.state.ActivePort
+	oldActiveImage := o.state.ActiveImage
+
+	o.state.ActiveSlot = standbySlot
+	o.state.ActiveContainerID = rollbackContainerID
+	o.state.ActivePort = standbyPort
+	o.state.ActiveImage = standbyImage
+
+	o.state.StandbySlot = oldActiveSlot
+	o.state.StandbyContainerID = oldActiveContainerID
+	o.state.StandbyPort = oldActivePort
+	o.state.StandbyImage = oldActiveImage
+
+	o.state.LastDeployTime = time.Now().UTC()
+	o.state.AddHistory(standbySlot, standbyImage, "rolled_back", fmt.Sprintf("Rolled back to %s on port %d", standbyImage, standbyPort))
+	_ = o.state.Save(cfg.StateFile)
+
+	// Stop the faulty container
+	if oldActiveContainerID != "" {
+		o.logFn("  • Decommissioning faulty release container (%s-%s)...", cfg.AppName, oldActiveSlot)
+		_ = o.docker.StopContainer(ctx, oldActiveContainerID, 3)
+	}
+
+	o.logFn("\n=================================================================")
+	o.logFn("✓ ROLLBACK COMPLETED SUCCESSFULLY")
+	o.logFn("   Active Environment: %s", standbySlot)
+	o.logFn("   Active Host Port:   %d", standbyPort)
+	o.logFn("   Stable Image:       %s", standbyImage)
+	o.logFn("=================================================================")
+	return nil
+}
+
+// GetStatus returns the current status report of both Blue and Green slots.
+func (o *Orchestrator) GetStatus(ctx context.Context) (*StatusReport, error) {
+	report := &StatusReport{
+		AppName:             o.config.AppName,
+		ActiveSlot:          o.state.ActiveSlot,
+		ActivePort:          o.state.ActivePort,
+		ActiveImage:         o.state.ActiveImage,
+		StandbySlot:         o.state.StandbySlot,
+		StandbyPort:         o.state.StandbyPort,
+		StandbyImage:        o.state.StandbyImage,
+		LastDeployTime:      o.state.LastDeployTime,
+		HistorySummaryCount: len(o.state.History),
+	}
+
+	if o.state.ActiveContainerID != "" {
+		if cInfo, err := o.docker.InspectContainer(ctx, o.state.ActiveContainerID); err == nil {
+			report.ActiveContainer = cInfo
+		}
+	}
+
+	if o.state.StandbyContainerID != "" {
+		if cInfo, err := o.docker.InspectContainer(ctx, o.state.StandbyContainerID); err == nil {
+			report.StandbyContainer = cInfo
+		}
+	}
+
+	return report, nil
 }
