@@ -43,7 +43,7 @@ type DockerManager interface {
 // CreateContainerOpts contains options for launching a new deployment slot container.
 type CreateContainerOpts struct {
 	AppName       string
-	Slot          string
+	Slot          string // "blue" or "green"
 	Image         string
 	ContainerPort int
 	HostPort      int
@@ -86,6 +86,7 @@ func (d *RealDockerManager) PullImage(ctx context.Context, imageRef string) erro
 	}
 	defer reader.Close()
 
+	// Consume the output stream to ensure pull completes
 	_, _ = io.Copy(io.Discard, reader)
 	return nil
 }
@@ -93,6 +94,13 @@ func (d *RealDockerManager) PullImage(ctx context.Context, imageRef string) erro
 // CreateAndStartContainer creates a container for a slot and maps its host port.
 func (d *RealDockerManager) CreateAndStartContainer(ctx context.Context, opts CreateContainerOpts) (string, error) {
 	containerName := fmt.Sprintf("%s-%s", opts.AppName, opts.Slot)
+
+	// Clean up any stale container with the same name before creation
+	existing, _ := d.findContainerByName(ctx, containerName)
+	if existing != nil {
+		_ = d.StopContainer(ctx, existing.ID, 3)
+		_ = d.RemoveContainer(ctx, existing.ID)
+	}
 
 	cPortStr := fmt.Sprintf("%d/tcp", opts.ContainerPort)
 	cPort, err := nat.NewPort("tcp", strconv.Itoa(opts.ContainerPort))
@@ -109,6 +117,7 @@ func (d *RealDockerManager) CreateAndStartContainer(ctx context.Context, opts Cr
 		},
 	}
 
+	// Build environment variable slice
 	envList := make([]string, 0, len(opts.Env)+2)
 	envList = append(envList, fmt.Sprintf("DEPLOY_SLOT=%s", opts.Slot))
 	envList = append(envList, fmt.Sprintf("APP_NAME=%s", opts.AppName))
@@ -143,8 +152,9 @@ func (d *RealDockerManager) CreateAndStartContainer(ctx context.Context, opts Cr
 	}
 
 	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		// Clean up container if startup fails
 		_ = d.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
-		return "", fmt.Errorf("failed to start container '%s': %w", containerName, err)
+		return "", fmt.Errorf("failed to start container '%s' (%s): %w", containerName, resp.ID[:12], err)
 	}
 
 	return resp.ID, nil
@@ -184,6 +194,29 @@ func (d *RealDockerManager) InspectContainer(ctx context.Context, containerID st
 	}, nil
 }
 
+// StopContainer gracefully stops a container with a specified timeout before SIGKILL.
+func (d *RealDockerManager) StopContainer(ctx context.Context, containerID string, timeoutSeconds int) error {
+	stopOpts := container.StopOptions{
+		Timeout: &timeoutSeconds,
+	}
+	if err := d.cli.ContainerStop(ctx, containerID, stopOpts); err != nil {
+		return fmt.Errorf("failed to stop container '%s': %w", containerID, err)
+	}
+	return nil
+}
+
+// RemoveContainer forces the removal of a container.
+func (d *RealDockerManager) RemoveContainer(ctx context.Context, containerID string) error {
+	removeOpts := container.RemoveOptions{
+		Force:         true,
+		RemoveVolumes: true,
+	}
+	if err := d.cli.ContainerRemove(ctx, containerID, removeOpts); err != nil {
+		return fmt.Errorf("failed to remove container '%s': %w", containerID, err)
+	}
+	return nil
+}
+
 // FindContainerBySlot looks up a running container matching the app name and slot labels.
 func (d *RealDockerManager) FindContainerBySlot(ctx context.Context, appName, slot string) (*ContainerInfo, error) {
 	filterArgs := filters.NewArgs()
@@ -203,4 +236,19 @@ func (d *RealDockerManager) FindContainerBySlot(ctx context.Context, appName, sl
 	}
 
 	return d.InspectContainer(ctx, containers[0].ID)
+}
+
+func (d *RealDockerManager) findContainerByName(ctx context.Context, name string) (*ContainerInfo, error) {
+	containers, err := d.cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range containers {
+		for _, n := range c.Names {
+			if strings.TrimPrefix(n, "/") == name {
+				return d.InspectContainer(ctx, c.ID)
+			}
+		}
+	}
+	return nil, nil
 }
