@@ -132,5 +132,29 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 	o.logFn("  ✓ Candidate container verified healthy in %v (Passed on attempt %d)",
 		healthResult.TotalDuration.Round(time.Millisecond), healthResult.Attempts)
 
+	// Phase 5: Traffic Switching
+	o.logFn("\n[Phase 5/5] Traffic Switching & Decommissioning")
+	o.logFn("  • Atomic traffic handoff: Switching active routing from slot '%s' -> '%s' (Port: %d)",
+		activeSlot, candidateSlot, candidatePort)
+
+	oldContainerID := o.state.ActiveContainerID
+	oldImage := o.state.ActiveImage
+
+	o.state.StandbySlot = activeSlot
+	o.state.StandbyContainerID = oldContainerID
+	o.state.StandbyPort = oldPort
+	o.state.StandbyImage = oldImage
+
+	o.state.ActiveSlot = candidateSlot
+	o.state.ActiveContainerID = candidateID
+	o.state.ActivePort = candidatePort
+	o.state.ActiveImage = targetImage
+	o.state.LastDeployTime = time.Now().UTC()
+	o.state.AddHistory(candidateSlot, targetImage, "success", fmt.Sprintf("Promoted to active slot on port %d", candidatePort))
+
+	if err := o.state.Save(cfg.StateFile); err != nil {
+		o.logFn("  ⚠️ Warning: Failed to persist state file: %v", err)
+	}
+
 	return nil
 }
