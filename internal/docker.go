@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 )
 
 // ContainerInfo encapsulates details of an active or standby container.
@@ -84,4 +87,64 @@ func (d *RealDockerManager) PullImage(ctx context.Context, imageRef string) erro
 	// Consume the output stream to ensure pull completes
 	_, _ = io.Copy(io.Discard, reader)
 	return nil
+}
+
+// CreateAndStartContainer creates a container for a slot and maps its host port.
+func (d *RealDockerManager) CreateAndStartContainer(ctx context.Context, opts CreateContainerOpts) (string, error) {
+	containerName := fmt.Sprintf("%s-%s", opts.AppName, opts.Slot)
+
+	cPortStr := fmt.Sprintf("%d/tcp", opts.ContainerPort)
+	cPort, err := nat.NewPort("tcp", strconv.Itoa(opts.ContainerPort))
+	if err != nil {
+		return "", fmt.Errorf("invalid container port %d: %w", opts.ContainerPort, err)
+	}
+
+	portBindings := nat.PortMap{
+		cPort: []nat.PortBinding{
+			{
+				HostIP:   "0.0.0.0",
+				HostPort: strconv.Itoa(opts.HostPort),
+			},
+		},
+	}
+
+	envList := make([]string, 0, len(opts.Env)+2)
+	envList = append(envList, fmt.Sprintf("DEPLOY_SLOT=%s", opts.Slot))
+	envList = append(envList, fmt.Sprintf("APP_NAME=%s", opts.AppName))
+	for k, v := range opts.Env {
+		envList = append(envList, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	labels := map[string]string{
+		"app":         opts.AppName,
+		"slot":        opts.Slot,
+		"managed_by":  "zero-downtime-deploy",
+		"deployed_at": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	config := &container.Config{
+		Image:        opts.Image,
+		ExposedPorts: nat.PortSet{nat.Port(cPortStr): struct{}{}},
+		Env:          envList,
+		Labels:       labels,
+	}
+
+	hostConfig := &container.HostConfig{
+		PortBindings: portBindings,
+		RestartPolicy: container.RestartPolicy{
+			Name: container.RestartPolicyUnlessStopped,
+		},
+	}
+
+	resp, err := d.cli.ContainerCreate(ctx, config, hostConfig, nil, nil, containerName)
+	if err != nil {
+		return "", fmt.Errorf("failed to create container '%s': %w", containerName, err)
+	}
+
+	if err := d.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		_ = d.cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
+		return "", fmt.Errorf("failed to start container '%s': %w", containerName, err)
+	}
+
+	return resp.ID, nil
 }
