@@ -416,3 +416,30 @@ curl http://localhost:8080/
 Traffic transferred from Blue to Green seamlessly with zero dropped requests!
 
 ---
+
+## Running Unit & Integration Tests
+
+The test suite covers:
+- Configuration parsing, defaults, and boundary validation
+- Atomic state serialization, concurrency, and audit logs
+- HTTP health polling, retries, status matching, and timeouts
+- Full Blue/Green transition cycle (`blue` -> `green` -> `blue`)
+- Automated rollback on health check failure
+- Manual instant rollback
+- Dynamic reverse proxy routing and live upstream switching
+
+Run all tests:
+```bash
+go test -v ./internal/...
+```
+
+Test coverage:
+```bash
+go test -cover ./internal/...
+```
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
