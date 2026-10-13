@@ -1,0 +1,35 @@
+# Binaries and build outputs
+/bin/
+/dist/
+zero-downtime-deploy
+zero-downtime-deploy.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts and coverage
+*.test
+*.out
+coverage.txt
+coverage.html
+.coverage
+
+# State, logs, and cache
+.deploy-state.json
+*.log
+scratch/
+tmp/
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
