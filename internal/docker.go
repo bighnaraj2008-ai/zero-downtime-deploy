@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -45,4 +46,27 @@ type CreateContainerOpts struct {
 // RealDockerManager implements DockerManager using the official Docker Go SDK.
 type RealDockerManager struct {
 	cli *client.Client
+}
+
+// NewRealDockerManager initializes a Docker client connected via local socket or environment.
+func NewRealDockerManager() (*RealDockerManager, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Docker client: %w", err)
+	}
+	return &RealDockerManager{cli: cli}, nil
+}
+
+// Ping checks if the Docker daemon is accessible.
+func (d *RealDockerManager) Ping(ctx context.Context) error {
+	_, err := d.cli.Ping(ctx)
+	if err != nil {
+		return fmt.Errorf("docker daemon unavailable: %w", err)
+	}
+	return nil
+}
+
+// Close releases Docker client resources.
+func (d *RealDockerManager) Close() error {
+	return d.cli.Close()
 }
