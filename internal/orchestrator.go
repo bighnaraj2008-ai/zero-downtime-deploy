@@ -62,7 +62,6 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 	o.logFn("   Live Port:    %d", cfg.LivePort)
 	o.logFn("=================================================================")
 
-	// Determine active and candidate target slots
 	activeSlot := o.state.ActiveSlot
 	var candidateSlot string
 	var candidatePort int
@@ -94,5 +93,34 @@ func (o *Orchestrator) Deploy(ctx context.Context) error {
 		o.logFn("\n🔍 [DRY-RUN] Simulating deployment steps without modifying Docker containers...")
 		return nil
 	}
+
+	// Phase 2: Pull Container Image
+	o.logFn("\n[Phase 2/5] Pulling Container Image")
+	o.logFn("  • Pulling %s from registry...", targetImage)
+	if err := o.docker.PullImage(ctx, targetImage); err != nil {
+		o.logFn("  ⚠️ Warning: Pull failed (%v), checking if image exists locally...", err)
+	} else {
+		o.logFn("  ✓ Image pulled successfully")
+	}
+
+	// Phase 3: Spin Up Candidate Container
+	o.logFn("\n[Phase 3/5] Starting Candidate Container")
+	o.logFn("  • Provisioning container: %s-%s on host port %d...", cfg.AppName, candidateSlot, candidatePort)
+	candidateID, err := o.docker.CreateAndStartContainer(ctx, CreateContainerOpts{
+		AppName:       cfg.AppName,
+		Slot:          candidateSlot,
+		Image:         targetImage,
+		ContainerPort: cfg.ContainerPort,
+		HostPort:      candidatePort,
+		Env:           cfg.Env,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to spin up candidate container: %w", err)
+	}
+	shortID := candidateID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	o.logFn("  ✓ Candidate container running (ID: %s)", shortID)
 	return nil
 }
